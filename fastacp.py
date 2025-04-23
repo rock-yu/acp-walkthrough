@@ -5,6 +5,11 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 from colorama import Fore
+from acp_sdk.client import Client
+from acp_sdk.models import (
+    Message,
+    MessagePart,
+)
 
 # === AgentCollection Implementation ===
 
@@ -44,7 +49,7 @@ class AgentCollection:
         
         for server in servers:
             async for agent in server.agents():
-                collection.agents.append(agent)
+                collection.agents.append((server,agent))
         
         return collection
     
@@ -144,14 +149,36 @@ class ActionStep:
 class Tool:
     """Base class for tools that agents can use."""
     
-    def __init__(self, name, description, inputs, output_type):
+    def __init__(self, name, description, inputs, output_type, client=None):
         self.name = name
         self.description = description
         self.inputs = inputs
         self.output_type = output_type
+        self.client = client
     
-    def __call__(self, *args, **kwargs):
-        raise NotImplementedError("Tool must implement __call__")
+    async def __call__(self, *args, **kwargs):
+        print(Fore.YELLOW + 'Tool being called with args: ' + str(args) + ' and kwargs: ' + str(kwargs) + Fore.RESET)
+    
+        # Extract the input content from either args or kwargs
+        content = ""
+        if args and isinstance(args[0], str):
+            content = args[0]
+        elif "prompt" in kwargs:
+            content = kwargs["prompt"]
+        elif "input" in kwargs:
+            content = kwargs["input"]
+        elif kwargs:
+            # If no specific key is found, use the first value
+            content = next(iter(kwargs.values()))
+            
+        # Now use the extracted content in your message
+        print(Fore.MAGENTA + content + Fore.RESET) 
+        response = await self.client.run_sync(
+            agent=self.name, 
+            inputs=[Message(parts=[MessagePart(content=content, content_type="text/plain")])]
+        )
+        print(Fore.RED + str(response) + Fore.RESET) 
+        return response.outputs[0].parts[0].content
 
 
 class MultiStepAgent:
@@ -183,7 +210,7 @@ class MultiStepAgent:
         # Implementation would depend on memory structure
         return self.input_messages
     
-    def step(self, memory_step: ActionStep) -> Union[None, Any]:
+    async def step(self, memory_step: ActionStep) -> Union[None, Any]:
         """Perform one step in the agent's reasoning process."""
         raise NotImplementedError
 
@@ -225,7 +252,17 @@ class ACPCallingAgent(MultiStepAgent):
 Available agents:
 {agents}
 
-Call these agents to accomplish tasks. When finished, call final_answer with your response.
+Your task is to:
+1. Analyze the user's request
+2. Call the appropriate agent(s) to gather information
+3. When you have a complete answer, ALWAYS call the final_answer tool with your response
+4. Do not provide answers directly in your messages - always use the final_answer tool
+
+Remember:
+- Always use the final_answer tool when you have a complete answer
+- Do not provide answers in your regular messages
+- Chain multiple agent calls if needed to gather all required information
+- The final_answer tool is the only way to return results to the user
 """
             }
         
@@ -235,20 +272,24 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
             # Create a callable that will invoke the ACP agent
             acp_tools[name] = Tool(
                 name=name,
-                description=agent.description,
-                inputs={"prompt": {"type":"string","description":"the prompt to pass to the agent"}},
-                output_type="str"
+                description=agent['agent'].description,
+                inputs={"input": {"type":"string","description":"the prompt to pass to the agent"}},
+                output_type="str",
+                client=agent['client']
             )
             
             # Override the __call__ method to make it actually call the ACP agent
-            def make_caller(agent_name):
-                def call_agent(prompt, **kwargs):
-                    # This would be implemented to make the actual call to the ACP agent
-                    # For now, we'll just return a placeholder
-                    return f"Response from {agent_name} for prompt: {prompt}"
+            def make_caller(agent_name, client):
+                async def call_agent(prompt, **kwargs):
+                    print(f"Calling {agent_name} with prompt: {prompt}")
+                    response = await client.run_sync(
+                        agent=agent_name, 
+                        inputs=[Message(parts=[MessagePart(content=prompt, content_type="text/plain")])]
+                    )
+                    return response.outputs[0].parts[0].content
                 return call_agent
-            
-            acp_tools[name].__call__ = make_caller(name)
+
+            acp_tools[name].__call__ = make_caller(name, agent['client'])  # This line isn't actually using the agent's client
         
         # Add final_answer tool
         acp_tools["final_answer"] = Tool(
@@ -258,7 +299,7 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
             output_type="str"
         )
         
-        def final_answer(answer, **kwargs):
+        async def final_answer(answer, **kwargs):
             return answer
         
         acp_tools["final_answer"].__call__ = final_answer
@@ -276,7 +317,7 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
     def initialize_system_prompt(self) -> str:
         """Generate the system prompt for the agent with ACP agent information."""
         agent_descriptions = "\n".join(
-            [f"- {name}: {agent.description}" for name, agent in self.acp_agents.items()]
+            [f"- {name}: {agent['agent'].description}" for name, agent in self.acp_agents.items()]
         )
         
         system_prompt = populate_template(
@@ -285,7 +326,7 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
         )
         return system_prompt
     
-    def step(self, memory_step: ActionStep) -> Union[None, Any]:
+    async def step(self, memory_step: ActionStep) -> Union[None, Any]:
         """
         Perform one step in the reasoning process: the agent thinks, calls ACP agents, and observes results.
         Returns None if the step is not final.
@@ -362,7 +403,7 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
                                 memory_step.tool_calls = [ToolCall(name=agent_name, arguments=agent_arguments, id="synthetic_id")]
                                 
                                 # Process the extracted tool call below
-                                return self._process_tool_call(memory_step, agent_name, agent_arguments)
+                                return await self._process_tool_call(memory_step, agent_name, agent_arguments)
                     except Exception as e:
                         self.logger.log(f"Error parsing tool call from content: {e}", level=LogLevel.ERROR)
                 
@@ -394,9 +435,9 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
         memory_step.model_output = str(f"Called Agent: '{agent_name}' with arguments: {agent_arguments}")
         memory_step.tool_calls = [ToolCall(name=agent_name, arguments=agent_arguments, id=tool_call_id)]
         
-        return self._process_tool_call(memory_step, agent_name, agent_arguments)
+        return await self._process_tool_call(memory_step, agent_name, agent_arguments)
         
-    def _process_tool_call(self, memory_step: ActionStep, agent_name: str, agent_arguments: Any) -> Union[None, Any]:
+    async def _process_tool_call(self, memory_step: ActionStep, agent_name: str, agent_arguments: Any) -> Union[None, Any]:
         """
         Process a tool call with the given name and arguments.
         """
@@ -438,7 +479,7 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
             if agent_arguments is None:
                 agent_arguments = {}
             
-            observation = self.execute_tool_call(agent_name, agent_arguments)
+            observation = await self.execute_tool_call(agent_name, agent_arguments)
             updated_information = str(observation).strip()
             
             self.logger.log(
@@ -458,7 +499,7 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
             }
         return arguments
     
-    def execute_tool_call(self, agent_name: str, arguments: Union[Dict[str, str], str]) -> Any:
+    async def execute_tool_call(self, agent_name: str, arguments: Union[Dict[str, str], str]) -> Any:
         """
         Execute an ACP agent call with the provided arguments.
         
@@ -480,9 +521,9 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
         try:
             # Call agent with appropriate arguments
             if isinstance(arguments, dict):
-                return tool(**arguments, sanitize_inputs_outputs=True)
+                return await tool(**arguments, sanitize_inputs_outputs=True)
             elif isinstance(arguments, str):
-                return tool(arguments, sanitize_inputs_outputs=True)
+                return await tool(arguments, sanitize_inputs_outputs=True)
             else:
                 raise TypeError(f"Unsupported arguments type: {type(arguments)}")
                 
@@ -531,7 +572,7 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
             memory_step = ActionStep()
             
             try:
-                result = self.step(memory_step)
+                result = await self.step(memory_step)
                 
                 # If we got a final result, return it
                 if result is not None:
@@ -568,116 +609,3 @@ Call these agents to accomplish tasks. When finished, call final_answer with you
         
         # If we hit max steps without a final answer
         return "I wasn't able to complete this task within the maximum number of steps."
-
-# Example usage with LiteLLMModel
-async def example_with_litellm():
-    from acp_sdk.client import Client
-    
-    try:
-        # Create a collection of ACP agents
-        async with Client(base_url="http://localhost:8000") as client, Client(base_url="http://localhost:8001") as enterprise:
-            agent_collection = await AgentCollection.from_acp(client, enterprise)
-            
-            # Import LiteLLM model
-            try:
-                from litellm_model import LiteLLMModel
-            except ImportError:
-                print("LiteLLMModel not found. Make sure you have the necessary dependencies installed.")
-                return
-            
-            # Create the model - update with your preferred model and API key
-            model = LiteLLMModel(
-                model_id="anthropic/claude-3-5-sonnet-20240620",
-                api_key="your-api-key-here"
-            )
-            
-            # Create an ACP calling agent
-            acp_agents = {agent.name: agent for agent in agent_collection.agents}
-            supervisor = ACPCallingAgent(acp_agents=acp_agents, model=model)
-            
-            # Run the agent with a query
-            result = await supervisor.run(
-                "I need help creating a Python function that calculates prime numbers efficiently."
-            )
-            
-            print(f"Final result: {result}")
-    except Exception as e:
-        print(f"Error in example_with_litellm: {str(e)}")
-
-# Example with mock agents for testing
-async def example_with_mocks():
-    try:
-        # Create mock agents
-        mock_agents = {
-            "code_assistant": Agent(
-                name="code_assistant",
-                description="Helps with coding tasks",
-                capabilities=["coding", "debugging"]
-            ),
-            "math_assistant": Agent(
-                name="math_assistant",
-                description="Helps with mathematical problems",
-                capabilities=["calculation", "equation solving"]
-            ),
-            "final_answer": Agent(
-                name="final_answer",
-                description="Provides the final answer to the user's query",
-                capabilities=["answering"]
-            )
-        }
-        
-        # Create a simple model function that can be used without external dependencies
-        def simple_model_function(messages, **kwargs):
-            # Extract the user's query from messages
-            query = ""
-            for msg in messages:
-                if msg.get("role") == "user" and msg.get("content"):
-                    query = msg["content"]
-                    break
-            
-            # Simple logic to determine which agent to call
-            if "code" in query.lower() or "function" in query.lower() or "program" in query.lower():
-                return ChatMessage(
-                    content="I'll use the code_assistant to help with this programming task.",
-                    tool_calls=[
-                        ToolCall(
-                            name="code_assistant",
-                            arguments={"prompt": query},
-                            id="call_1"
-                        )
-                    ]
-                )
-            elif "math" in query.lower() or "calculate" in query.lower() or "number" in query.lower():
-                return ChatMessage(
-                    content="Let me use the math_assistant for this calculation.",
-                    tool_calls=[
-                        ToolCall(
-                            name="math_assistant",
-                            arguments={"prompt": query},
-                            id="call_2"
-                        )
-                    ]
-                )
-            else:
-                return ChatMessage(
-                    content="I can answer this directly.",
-                    tool_calls=[
-                        ToolCall(
-                            name="final_answer",
-                            arguments={"answer": f"Here's my answer to: {query}"},
-                            id="call_final"
-                        )
-                    ]
-                )
-        
-        # Create an ACP calling agent with the simple model function
-        supervisor = ACPCallingAgent(acp_agents=mock_agents, model=simple_model_function)
-        
-        # Run the agent with a query
-        result = await supervisor.run(
-            "I need help writing a function to calculate prime numbers."
-        )
-        
-        print(f"Final result: {result}")
-    except Exception as e:
-        print(f"Error in example_with_mocks: {str(e)}")

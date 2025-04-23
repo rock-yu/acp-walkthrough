@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from acp_sdk.models import Message, MessagePart
 from acp_sdk.server import Context, RunYield, RunYieldResume, Server
 from smolagents import ToolCallingAgent, ToolCollection, CodeAgent, DuckDuckGoSearchTool, LiteLLMModel, VisitWebpageTool
+import logging 
 
 server = Server()
 
@@ -14,6 +15,7 @@ model = LiteLLMModel(
 
 @server.agent()
 async def ollama_smolagents(input: list[Message], context: Context) -> AsyncGenerator[RunYield, RunYieldResume]:
+    logging.info('Call made')
     "This is a CodeAgent with the ability to search the internet for pro level research"
     agent = CodeAgent(tools=[DuckDuckGoSearchTool(), VisitWebpageTool()], model=model)
 

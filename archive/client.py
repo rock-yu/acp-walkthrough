@@ -7,7 +7,7 @@ from acp_sdk.models import (
 
 async def example() -> None:
     async with Client(base_url="http://localhost:8000") as client:
-        run = await client.run_sync(
+        run = await client.run_async(
             agent="ollama_smolagents", inputs=[Message(parts=[MessagePart(content="Write me a political commentary on the state of affairs in a topical nation.", content_type="text/plain")])]
         )
         print(run)
