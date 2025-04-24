@@ -13,3 +13,4 @@ logging_prompt.py
 litellmtest.py
 .env 
 archive 
+.DS_Store
