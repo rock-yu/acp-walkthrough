@@ -11,3 +11,5 @@ wheels/
 
 logging_prompt.py
 litellmtest.py
+.env 
+archive 

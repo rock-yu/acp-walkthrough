@@ -249,21 +249,22 @@ class ACPCallingAgent(MultiStepAgent):
         if prompt_templates is None:
             prompt_templates = {
                 "system_prompt": """You are a supervisory agent that can delegate tasks to specialized ACP agents.
-Available agents:
-{agents}
+                Available agents:
+                {agents}
 
-Your task is to:
-1. Analyze the user's request
-2. Call the appropriate agent(s) to gather information
-3. When you have a complete answer, ALWAYS call the final_answer tool with your response
-4. Do not provide answers directly in your messages - always use the final_answer tool
+                Your task is to:
+                1. Analyze the user's request
+                2. Call the appropriate agent(s) to gather information
+                3. When you have a complete answer, ALWAYS call the final_answer tool with your response
+                4. Do not provide answers directly in your messages - always use the final_answer tool
+                5. If you have sufficient information to complete a task do not call out to another agent unless required
 
-Remember:
-- Always use the final_answer tool when you have a complete answer
-- Do not provide answers in your regular messages
-- Chain multiple agent calls if needed to gather all required information
-- The final_answer tool is the only way to return results to the user
-"""
+                Remember:
+                - Always use the final_answer tool when you have a complete answer
+                - Do not provide answers in your regular messages
+                - Chain multiple agent calls if needed to gather all required information
+                - The final_answer tool is the only way to return results to the user
+                """
             }
         
         # Convert ACP agents to a format similar to tools
@@ -325,7 +326,14 @@ Remember:
             variables={"agents": agent_descriptions},
         )
         return system_prompt
-    
+
+    def save_to_memory(self, key: str, value: Any) -> None:
+        """Save a value to the agent's persistent memory."""
+        self.state[key] = value
+        self.logger.log(f"Saved to memory: {key}={value}", level=LogLevel.DEBUG)
+
+
+
     async def step(self, memory_step: ActionStep) -> Union[None, Any]:
         """
         Perform one step in the reasoning process: the agent thinks, calls ACP agents, and observes results.
@@ -481,6 +489,8 @@ Remember:
             
             observation = await self.execute_tool_call(agent_name, agent_arguments)
             updated_information = str(observation).strip()
+
+            self.save_to_memory(f"{agent_name}_response", updated_information)
             
             self.logger.log(
                 f"Observations: {updated_information}",
@@ -567,6 +577,17 @@ Remember:
         result = None
         for step_num in range(max_steps):
             self.logger.log(f"Step {step_num + 1}/{max_steps}", level=LogLevel.INFO)
+
+            # Add memory context to the messages if we have any state
+            if self.state and step_num > 0:
+                memory_context = "Current memory state:\n"
+                for key, value in self.state.items():
+                    memory_context += f"- {key}: {value}\n"
+                
+                self.input_messages.append({
+                    "role": "system",
+                    "content": [{"type": "text", "text": memory_context}]
+                })
             
             # Create a new action step and execute it
             memory_step = ActionStep()

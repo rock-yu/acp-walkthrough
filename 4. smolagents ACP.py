@@ -14,9 +14,8 @@ model = LiteLLMModel(
 )
 
 @server.agent()
-async def ollama_smolagents(input: list[Message], context: Context) -> AsyncGenerator[RunYield, RunYieldResume]:
-    logging.info('Call made')
-    "This is a CodeAgent with the ability to search the internet for pro level research"
+async def health_agent(input: list[Message], context: Context) -> AsyncGenerator[RunYield, RunYieldResume]:
+    "This is a CodeAgent which supports the hospital to handle health based questions for patients. Current or prospective patients can use it to find answers about their health and hospital treatments."
     agent = CodeAgent(tools=[DuckDuckGoSearchTool(), VisitWebpageTool()], model=model)
 
     prompt = input[0].parts[0].content
