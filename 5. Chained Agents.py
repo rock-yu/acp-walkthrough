@@ -1,20 +1,19 @@
 import asyncio
 from acp_sdk.client import Client
-from acp_sdk.models import (
-    Message,
-    MessagePart,
-)
+from colorama import Fore 
 
-async def example() -> None:
+async def run_hospital_workflow() -> None:
     async with Client(base_url="http://localhost:8001") as insurer, Client(base_url="http://localhost:8000") as hospital:
         run1 = await hospital.run_sync(
-            agent="health_agent", inputs=[Message(parts=[MessagePart(content="Do i need rehabilitation for a shoulder reconstruction?", content_type="text/plain")])]
+            agent="health_agent", input="Do I need rehabilitation after a shoulder reconstruction?"
         )
-        print(run1) 
+        content = run1.output[0].parts[0].content
+        print(Fore.LIGHTMAGENTA_EX+ content + Fore.RESET)
+
         run2 = await insurer.run_sync(
-            agent="policy_agent", inputs=[Message(parts=[MessagePart(content="What is the waiting period for rehabilitation?", content_type="text/plain")])]
+            agent="policy_agent", input=f"Context: {content} What is the waiting period for rehabilitation?"
         )
-        print(run2)
+        print(Fore.YELLOW + run2.output[0].parts[0].content + Fore.RESET)
 
 if __name__ == "__main__":
-    asyncio.run(example())
+    asyncio.run(run_hospital_workflow())

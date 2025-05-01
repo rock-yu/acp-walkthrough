@@ -175,10 +175,10 @@ class Tool:
         print(Fore.MAGENTA + content + Fore.RESET) 
         response = await self.client.run_sync(
             agent=self.name, 
-            inputs=[Message(parts=[MessagePart(content=content, content_type="text/plain")])]
+            input=[Message(parts=[MessagePart(content=content, content_type="text/plain")])]
         )
         print(Fore.RED + str(response) + Fore.RESET) 
-        return response.outputs[0].parts[0].content
+        return response.output[0].parts[0].content
 
 
 class MultiStepAgent:
@@ -341,7 +341,6 @@ class ACPCallingAgent(MultiStepAgent):
         """
         # Convert messages to LiteLLM format
         memory_messages = self.write_memory_to_messages()
-        
         # Make sure all messages are in the correct LiteLLM format
         for i, message in enumerate(memory_messages):
             if "content" in message and not isinstance(message["content"], list):
@@ -351,12 +350,17 @@ class ACPCallingAgent(MultiStepAgent):
         memory_step.model_input_messages = memory_messages.copy()
         
         try:
+            # import logging
+            # import sys 
+            # logging.warn(self.tools['policy_agent'])
+            # # sys.exit()
             # Get response from the model
             model_message: ChatMessage = self.model(
                 memory_messages,
                 tools_to_call_from=list(self.tools.values()),
                 stop_sequences=["Observation:", "Calling agents:"],
             )
+
             memory_step.model_output_message = model_message
         except Exception as e:
             raise AgentParsingError(f"Error while generating or parsing output:\n{e}", self.logger) from e

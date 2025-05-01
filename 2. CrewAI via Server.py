@@ -1,11 +1,9 @@
+from crewai import Crew, Task, Agent, LLM
+from crewai_tools import RagTool
+
 from collections.abc import AsyncGenerator
 from acp_sdk.models import Message, MessagePart
 from acp_sdk.server import Context, RunYield, RunYieldResume, Server
-
-from crewai import Crew, Task, Agent, LLM
-from crewai_tools import SerperDevTool
-from crewai_tools import RagTool
-from colorama import Fore
 
 llm = LLM(model="ollama_chat/qwen2.5:14b", base_url="http://localhost:11434", max_tokens=8192)
 config = {
@@ -29,7 +27,9 @@ rag_tool.add("./data/gold-hospital-and-premium-extras.pdf", data_type="pdf_file"
 insurance_agent = Agent(
     role="Senior Insurance Coverage Assistant", 
     goal="Determine whether something is covered or not",
-    backstory="You are an expert insurance agent designed to assist with coverage queries",
+    backstory="""You are an expert insurance agent designed to assist with coverage queries. Whenever you call the knowledge base tool the tool input must follow the pattern
+        {query: 'your query', kwargs:{'}}"
+    """,
     verbose=True,
     allow_delegation=False,
     llm=llm,
@@ -37,6 +37,7 @@ insurance_agent = Agent(
     max_retry_limit=5
 )
 
+rag_tool
 import logging 
 logger = logging.getLogger(__name__)
 

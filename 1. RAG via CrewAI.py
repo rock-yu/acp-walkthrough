@@ -1,7 +1,5 @@
 from crewai import Crew, Task, Agent, LLM
-from crewai_tools import SerperDevTool
 from crewai_tools import RagTool
-from colorama import Fore
 
 llm = LLM(model="ollama_chat/qwen2.5:14b", base_url="http://localhost:11434", max_tokens=8192)
 config = {
