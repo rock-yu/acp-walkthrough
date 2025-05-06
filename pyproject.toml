@@ -12,7 +12,9 @@ dependencies = [
     "langchain>=0.3.23",
     "langchain-litellm>=0.1.4",
     "langchain-ollama>=0.3.2",
+    "mcp>=1.7.1",
     "pydantic>=2.11.4",
     "shutup>=0.2.0",
-    "smolagents[litellm]>=1.14.0",
+    "smolagents[litellm,mcp]>=1.14.0",
+    "yfinance>=0.2.58",
 ]
